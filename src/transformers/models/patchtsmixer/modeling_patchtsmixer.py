@@ -1675,6 +1675,13 @@ class PatchTSMixerForPrediction(PatchTSMixerPreTrainedModel):
         return_dict = return_dict if return_dict is not None else self.use_return_dict
 
         # past_values: tensor [batch_size x context_length x num_input_channels]
+        # import numpy as np
+        # is_n1 = sum(sum(sum(past_values != past_values)))
+        # future_values = future_values[0,:].reshape((1,96,1))
+        # is_n2 = sum(sum(sum(future_values[..., self.prediction_channel_indices] != future_values[..., self.prediction_channel_indices])))
+        if observed_mask is None:
+            observed_mask = past_values == past_values
+            past_values[~observed_mask] = 0
         model_output = self.model(
             past_values,
             observed_mask=observed_mask,
@@ -1687,8 +1694,10 @@ class PatchTSMixerForPrediction(PatchTSMixerPreTrainedModel):
         # tensor [batch_size x prediction_length x num_input_channels]
         y_hat = self.head(model_output.last_hidden_state)
 
+        loss_mask = future_values == future_values
         loss_val = None
         if self.prediction_channel_indices is not None:
+            loss_mask = loss_mask[..., self.prediction_channel_indices]
             if self.distribution_output:
                 distribution = self.distribution_output.distribution(
                     y_hat,
@@ -1698,7 +1707,7 @@ class PatchTSMixerForPrediction(PatchTSMixerPreTrainedModel):
                 if future_values is not None and return_loss is True:
                     loss_val = loss(
                         distribution,
-                        future_values[..., self.prediction_channel_indices],
+                        future_values[..., self.prediction_channel_indices]
                     )
                     # take average of the loss
                     loss_val = weighted_average(loss_val)
@@ -1708,7 +1717,7 @@ class PatchTSMixerForPrediction(PatchTSMixerPreTrainedModel):
                     + model_output.loc[..., self.prediction_channel_indices]
                 )
                 if future_values is not None and return_loss is True:
-                    loss_val = loss(y_hat, future_values[..., self.prediction_channel_indices])
+                    loss_val = loss(y_hat[loss_mask], future_values[..., self.prediction_channel_indices][loss_mask])
         else:
             if self.distribution_output:
                 distribution = self.distribution_output.distribution(
